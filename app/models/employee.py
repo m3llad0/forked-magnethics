@@ -3,7 +3,7 @@ from datetime import datetime
 
 
 class Employee(db.Model):
-    __tablename__ = 'employees'
+    __tablename__ = 'employee'
 
 
     id = db.Column(db.String(255), primary_key=True)
@@ -17,12 +17,12 @@ class Employee(db.Model):
     hire_date = db.Column(db.Date, nullable=False)
     email = db.Column(db.String(255), nullable=False, unique=True)
     phone_number = db.Column(db.String(255), nullable=True)
-    direct_supervisor_id = db.Column(db.String(255), db.ForeignKey('employees.id'), nullable=True)
-    functional_supervisor_id = db.Column(db.String(255), db.ForeignKey('employees.id'), nullable=True)
+    direct_supervisor_id = db.Column(db.String(255), db.ForeignKey('employee.id'), nullable=True)
+    functional_supervisor_id = db.Column(db.String(255), db.ForeignKey('employee.id'), nullable=True)
 
     # Relationships
-    client = db.relationship('Client', back_populates='employees', lazy=True)
-    event = db.relationship('Event', back_populates='employees', lazy=True)
+    client = db.relationship('Client', back_populates='employee', lazy=True)
+    event = db.relationship('Event', back_populates='employee', lazy=True)
     
     direct_supervisor = db.relationship(
         'Employee', 
