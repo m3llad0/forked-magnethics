@@ -18,13 +18,27 @@ class Client(db.Model):
     registration_date = db.Column(db.Date, default=datetime.utcnow)
     last_modification_date = db.Column(db.Date, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # Relación con Consultant
     account_executive = db.relationship('Consultant', backref='clients')
+    
+    # NUEVA RELACIÓN INVERSA hacia Employee (employee.py)
+    employees = db.relationship(
+        "Employee",
+        back_populates="client",
+        lazy=True
+    )
 
     def __repr__(self):
         return f"<Client {self.company_name}>"
     
     def to_dict(self):
-        return {"id": self.id, "company_name": self.company_name, "business_name": self.business_name, "country": self.country, "primary_contact": self.primary_contact}
+        return {
+            "id": self.id,
+            "company_name": self.company_name,
+            "business_name": self.business_name,
+            "country": self.country,
+            "primary_contact": self.primary_contact
+        }
     
     @staticmethod
     def create_client(data):
