@@ -25,7 +25,7 @@ class Stages:
         return result.inserted_id
     
     def get_one(self, stage_id):
-        stage = self.collection.find_one({"id": stage_id})
+        stage = self.collection.find_one({"_id": stage_id})
 
         if stage:
             return stage

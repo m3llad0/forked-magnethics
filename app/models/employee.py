@@ -12,8 +12,8 @@ class Employee(db.Model):
     last_name_paternal = db.Column(db.String(255), nullable=False)
     last_name_maternal = db.Column(db.String(255))
     position = db.Column(db.String(255), nullable=False)
-    # client_id = db.Column(db.Integer, db.ForeignKey('client.id'), nullable=True)
-    # event_id = db.Column(db.Integer, db.ForeignKey('event.id'), nullable=True)
+    client_id = db.Column(db.Integer, db.ForeignKey('client.id'), nullable=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('event.id'), nullable=True)
     hire_date = db.Column(db.Date, nullable=False)
     email = db.Column(db.String(255), nullable=False, unique=True)
     phone_number = db.Column(db.String(255), nullable=True)
@@ -21,8 +21,8 @@ class Employee(db.Model):
     functional_supervisor_id = db.Column(db.String(255), db.ForeignKey('employees.id'), nullable=True)
 
     # Relationships
-    # client = db.relationship('Client', back_populates='employees', lazy=True)
-    # event = db.relationship('Event', back_populates='employees', lazy=True)
+    client = db.relationship('Client', back_populates='employees', lazy=True)
+    event = db.relationship('Event', back_populates='employees', lazy=True)
     
     direct_supervisor = db.relationship(
         'Employee', 

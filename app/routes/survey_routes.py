@@ -1,5 +1,5 @@
 from flask import request, jsonify, Blueprint, current_app
-from app.models import Survey
+from app.models import Survey, ScaleOptions
 from app.utils import logger
 
 survey = Blueprint("survey", __name__)
@@ -9,7 +9,7 @@ def create_survey():
     try:
         survey_data = request.json
 
-        required_fields = ["id", "title", "subtitle", "deadline", "question_ids"]
+        required_fields = ["id", "title", "subtitle", "description", "deadline", "handInDate", "scale_id", "question_ids"]
 
         if not all(field in survey_data for field in required_fields):
             logger.error("Missing fields in body")
@@ -21,14 +21,22 @@ def create_survey():
 
         stages_collection = db.get_collection("Stages")
         surveys_collection = db.get_collection("Surveys")
+        scale_options_collection = db.get_collection("ScaleOptions")
+
+        scale_options = ScaleOptions(scale_options=[{"": "", "": ""}], scale_options_collection=scale_options_collection)
+
+        options = scale_options.get_scale_options(survey_data["scale_id"])
 
         # Create a Survey instance
         survey = Survey(
             id=survey_data["id"],
             title=survey_data["title"],
             subtitle=survey_data["subtitle"],
+            description=survey_data["description"],
             deadline=survey_data["deadline"],
+            handInDate=survey_data["handInDate"],
             question_ids=survey_data["question_ids"],
+            scale_options=options,
             stage_collection=stages_collection,
             survey_collection=surveys_collection,
         )
@@ -76,7 +84,7 @@ def get_survey(id):
         surveys_collection = db.get_collection("Surveys")
 
         # Fetch a single survey
-        survey = surveys_collection.find_one({"id": id})
+        survey = surveys_collection.find_one({"_id": id})
         if not survey:
             return jsonify({"message": "Survey not found"}), 404
 

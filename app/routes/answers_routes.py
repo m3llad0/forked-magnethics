@@ -1,10 +1,12 @@
+# app/routes/answers_routes.py
+
 from flask import request, jsonify, Blueprint, current_app
 from datetime import datetime
 from app.utils import logger
+from app.models.event import Event  # Importamos Event para filtrar por survey_id
 
 answers = Blueprint("answer", __name__)
 
-# Route 1: Save Survey Progress
 @answers.route('/<survey_id>/save', methods=['POST'])
 def save_survey_progress(survey_id):
     try:
@@ -25,12 +27,22 @@ def save_survey_progress(survey_id):
         surveys_collection = db.get_collection("Surveys")
         answers_collection = db.get_collection("SurveyAnswers")
 
-        # Validate that the survey exists
+        # 1) Buscar el Event con ese survey_id (string)
+        event = Event.query.filter_by(survey_id=survey_id).first()
+        if not event:
+            logger.error(f"Event not found for survey_id={survey_id}")
+            return jsonify({"error": "Event not found"}), 404
+
+        # 2) Obtener el tipo de encuesta
+        survey_type = event.survey_type
+
+        # 3) Validar que la encuesta exista en Mongo (opcional)
         survey = surveys_collection.find_one({"_id": survey_id})
         if not survey:
-            logger.error(f"Survey {survey_id} not found")
+            logger.error(f"Survey {survey_id} not found in Mongo")
             return jsonify({"error": "Survey not found"}), 404
 
+        # 4) Guardar/actualizar respuestas
         for employee_answer in employee_answers:
             employee_id = employee_answer.get('employee_id')
             answers = employee_answer.get('answers')
@@ -39,7 +51,6 @@ def save_survey_progress(survey_id):
                 logger.error("Invalid employee answer data")
                 return jsonify({"error": "Invalid employee answer data"}), 400
 
-            # Check if a draft already exists
             existing_entry = answers_collection.find_one({
                 "survey_id": survey_id,
                 "user_id": user_id,
@@ -47,28 +58,30 @@ def save_survey_progress(survey_id):
             })
 
             if existing_entry:
-                # Update the existing draft
-                result = answers_collection.update_one(
+                # Update existing draft
+                answers_collection.update_one(
                     {"_id": existing_entry["_id"]},
                     {
                         "$set": {
                             "answers": answers,
                             "status": "in_progress",
+                            "survey_type": survey_type,  # Guardar aquí
                             "last_updated": datetime.utcnow()
                         }
                     }
                 )
                 logger.info(f"Updated progress for survey {survey_id}, employee {employee_id}")
             else:
-                # Create a new draft
+                # Create new draft
                 new_entry = {
                     "survey_id": survey_id,
                     "user_id": user_id,
                     "employee_id": employee_id,
                     "answers": answers,
                     "status": "in_progress",
-                    "created_at": datetime.utcnow(),
-                    "last_updated": datetime.utcnow()
+                    "survey_type": survey_type,  # Guardar aquí
+                    "created_at": datetime.now(),
+                    "last_updated": datetime.now()
                 }
                 answers_collection.insert_one(new_entry)
                 logger.info(f"Saved new progress for survey {survey_id}, employee {employee_id}")
@@ -79,7 +92,6 @@ def save_survey_progress(survey_id):
         return jsonify({"error": "Internal Server Error"}), 500
 
 
-# Route 2: Submit Survey
 @answers.route('/<survey_id>/submit', methods=['POST'])
 def submit_survey(survey_id):
     try:
@@ -99,6 +111,14 @@ def submit_survey(survey_id):
 
         answers_collection = db.get_collection("SurveyAnswers")
 
+        # 1) Obtener el Event
+        event = Event.query.filter_by(survey_id=survey_id).first()
+        if not event:
+            logger.error(f"Event not found for survey_id={survey_id}")
+            return jsonify({"error": "Event not found"}), 404
+
+        survey_type = event.survey_type
+
         for employee_answer in employee_answers:
             employee_id = employee_answer.get('employee_id')
             answers = employee_answer.get('answers')
@@ -107,7 +127,6 @@ def submit_survey(survey_id):
                 logger.error("Invalid employee answer data")
                 return jsonify({"error": "Invalid employee answer data"}), 400
 
-            # Update the draft to mark it as completed
             result = answers_collection.update_one(
                 {
                     "survey_id": survey_id,
@@ -118,18 +137,28 @@ def submit_survey(survey_id):
                     "$set": {
                         "answers": answers,
                         "status": "completed",
+                        "survey_type": survey_type,  # Guardar aquí
                         "last_updated": datetime.utcnow()
                     }
                 }
             )
 
             if result.matched_count == 0:
-                logger.error(f"No draft found for survey {survey_id}, employee {employee_id}")
-                return jsonify({
-                    "error": f"No in-progress survey found for employee {employee_id}"
-                }), 404
-
-            logger.info(f"Submitted survey {survey_id} for employee {employee_id}")
+                # No draft found
+                new_entry = {
+                    "survey_id": survey_id,
+                    "user_id": user_id,
+                    "employee_id": employee_id,
+                    "answers": answers,
+                    "status": "completed",
+                    "survey_type": survey_type,  # Guardar aquí
+                    "created_at": datetime.now(),
+                    "last_updated": datetime.now()
+                }
+                answers_collection.insert_one(new_entry)
+                logger.info(f"Created new submission for survey {survey_id}, employee {employee_id}")
+            else:
+                logger.info(f"Updated existing submission for survey {survey_id}, employee {employee_id}")
 
         return jsonify({"message": "Survey submitted successfully"}), 200
     except Exception as e:
@@ -137,7 +166,6 @@ def submit_survey(survey_id):
         return jsonify({"error": "Internal Server Error"}), 500
 
 
-# Route 3: Get Survey Answers
 @answers.route('/<survey_id>/answers', methods=['GET'])
 def get_survey_answers(survey_id):
     try:
@@ -163,6 +191,7 @@ def get_survey_answers(survey_id):
                 "employee_id": doc["employee_id"],
                 "answers": doc["answers"],
                 "status": doc["status"],
+                "survey_type": doc.get("survey_type", "Unknown"),
                 "last_updated": doc["last_updated"]
             }
             for doc in answers_cursor
@@ -178,7 +207,6 @@ def get_survey_answers(survey_id):
         return jsonify({"error": "Internal Server Error"}), 500
 
 
-# Route 4: Delete Survey Answers
 @answers.route('/<survey_id>/answers', methods=['DELETE'])
 def delete_survey_answers(survey_id):
     try:
@@ -207,6 +235,7 @@ def delete_survey_answers(survey_id):
         logger.critical(f"Error deleting answers for survey {survey_id}", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
 
+
 @answers.route('/surveys/status', methods=['GET'])
 def get_surveys_by_status():
     try:
@@ -223,7 +252,7 @@ def get_surveys_by_status():
         surveys_collection = db.get_collection("Surveys")
         answers_collection = db.get_collection("SurveyAnswers")
 
-        # Fetch all surveys
+        # Fetch all surveys from Mongo
         surveys = list(surveys_collection.find())
         if not surveys:
             logger.info("No surveys found")
@@ -236,42 +265,37 @@ def get_surveys_by_status():
         }
 
         for survey in surveys:
-            survey_id = str(survey["_id"])  # Ensure survey_id is a string
-            total_questions = len(survey.get("test_items", []))
+            survey_id = str(survey["_id"])
 
-            # Fetch user's answers for the survey
+            question_blocks = survey.get("questionBlocks", [])
+            all_questions = [q for block in question_blocks for q in block.get("questions", [])]
+            total_questions = len(all_questions)
+
             user_answers = list(answers_collection.find({
                 "survey_id": survey_id,
                 "user_id": user_id
             }))
 
-            if not user_answers:
-                logger.info(f"No answers found for survey {survey_id} and user {user_id}")
-                progress_percentage = 0
-            else:
-                # Calculate the number of answered questions
-                answered_questions = sum(
-                    len(answer.get("answers", [])) for answer in user_answers
-                )
-                progress_percentage = (answered_questions / total_questions) * 100 if total_questions > 0 else 0
+            is_completed = any(a.get("status") == "completed" for a in user_answers)
+            answered_questions = sum(len(a.get("answers", [])) for a in user_answers)
+            progress_percentage = (answered_questions / total_questions) * 100 if total_questions else 0
 
-            logger.debug(f"Survey ID: {survey_id}, Progress: {progress_percentage:.2f}%")
+            logger.debug(f"Survey ID: {survey_id}, Progress: {progress_percentage:.2f}%, Completed: {is_completed}")
 
-            # Categorize survey
             survey_data = {
                 "id": survey_id,
                 "title": survey.get("title", "Untitled Survey"),
                 "subtitle": survey.get("subtitle", "No description"),
                 "progress": round(progress_percentage, 2),
-                "assignmentDate": survey.get("assignmentDate", ""),
+                "assignmentDate": survey.get("deadline", ""),
                 "handInDate": survey.get("handInDate", ""),
-                "questions": survey.get("test_items", [])
+                "questions": all_questions
             }
 
-            if 0 < progress_percentage < 100:
-                categorized_surveys["in_progress"].append(survey_data)
-            elif progress_percentage == 100:
+            if is_completed:
                 categorized_surveys["completed"].append(survey_data)
+            elif 0 < progress_percentage < 100:
+                categorized_surveys["in_progress"].append(survey_data)
             else:
                 categorized_surveys["pending"].append(survey_data)
 
