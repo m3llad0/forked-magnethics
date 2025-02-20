@@ -4,7 +4,7 @@ import uuid
 
 
 class Employee(db.Model):
-    __tablename__ = 'employees'
+    __tablename__ = 'employee'
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     employee_number = db.Column(db.Integer, nullable=False, unique=True, index=True)
