@@ -17,8 +17,6 @@ server = FlaskServer(
 
 server.add_blueprint(bp, url_prefix="/employee")
 server.add_blueprint(stage, url_prefix="/stage")
-server.add_blueprint(client, url_prefix="/client")
-server.add_blueprint(event, url_prefix="/event")
 server.add_blueprint(survey, url_prefix="/survey")
 server.add_blueprint(answers, url_prefix="/answer")
 server.add_blueprint(scale_options, url_prefix="/scale-options")
