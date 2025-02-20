@@ -1,140 +1,129 @@
+# app/routes/survey_routes.py
+
 from flask import request, jsonify, Blueprint, current_app
-from app.models import Survey, ScaleOptions
+from bson.objectid import ObjectId
 from app.utils import logger
+from app.services import db
+
+# Modelos SQL
+from app.models.client import Client
+from app.models.product import Product
+from app.models.employee import Employee
+from app.models.employee_survey_assignment import EmployeeSurveyAssignment
+
+# Clase Survey para Mongo
+from app.models.survey import Survey  # la clase con fetch_questions(), insert_survey()
+
+# ML model o lógica para 360
+from app.ml.assign_360_evaluators import assign_360_evaluators_spectral  # ejemplo
 
 survey = Blueprint("survey", __name__)
 
 @survey.route("/", methods=["POST"])
 def create_survey():
+    """
+    Crea una encuesta en MongoDB (stages, scale_options, etc.)
+    y asigna empleados en la tabla employee_survey_assignments.
+    """
     try:
-        survey_data = request.json
-
-        required_fields = ["id", "title", "subtitle", "description", "deadline", "handInDate", "scale_id", "question_ids"]
-
-        if not all(field in survey_data for field in required_fields):
+        data = request.json
+        required_fields = [
+            "id", "title", "subtitle", "description",
+            "client_id", "product_id", "deadline", "handInDate",
+            "scale_id", "question_ids"
+        ]
+        if not data or not all(f in data for f in required_fields):
             logger.error("Missing fields in body")
             return jsonify({"error": "Missing required fields"}), 400
 
-        db = current_app.mongo_db
+        # 1. Validar DB
+        mongo_db = current_app.mongo_db
+        if not mongo_db:
+            return jsonify({"error": "MongoDB not initialized"}), 500
         if not db:
-            return jsonify({"error": "Database not initialized"}), 500
+            return jsonify({"error": "SQL DB not initialized"}), 500
 
-        stages_collection = db.get_collection("Stages")
-        surveys_collection = db.get_collection("Surveys")
-        scale_options_collection = db.get_collection("ScaleOptions")
+        # 2. Validar Client y Product en SQL
+        client = db.session.get(Client, data["client_id"])
+        if not client:
+            return jsonify({"error": "Client not found"}), 404
 
-        scale_options = ScaleOptions(scale_options=[{"": "", "": ""}], scale_options_collection=scale_options_collection)
+        product = db.session.get(Product, data["product_id"])
+        if not product:
+            return jsonify({"error": "Product not found"}), 400
 
-        options = scale_options.get_scale_options(survey_data["scale_id"])
+        # Determinar survey_type
+        p_name = product.name.lower()
+        if "enex" in p_name:
+            survey_type = "Enex"
+        elif "360" in p_name:
+            survey_type = "360"
+        else:
+            return jsonify({"error": "Product must contain 'ENEX' or '360'"}), 400
 
-        # Create a Survey instance
-        survey = Survey(
-            id=survey_data["id"],
-            title=survey_data["title"],
-            subtitle=survey_data["subtitle"],
-            description=survey_data["description"],
-            deadline=survey_data["deadline"],
-            handInDate=survey_data["handInDate"],
-            question_ids=survey_data["question_ids"],
-            scale_options=options,
-            stage_collection=stages_collection,
-            survey_collection=surveys_collection,
+        # 3. Scale options en Mongo
+        scale_options_coll = mongo_db.get_collection("ScaleOptions")
+        scale_doc = scale_options_coll.find_one({"_id": ObjectId(data["scale_id"])})
+        if not scale_doc:
+            return jsonify({"error": "Invalid scale options"}), 400
+        scale_options = scale_doc.get("scaleOptions", [])
+
+        # 4. Crear Survey en Mongo
+        stages_coll = mongo_db.get_collection("Stages")
+        surveys_coll = mongo_db.get_collection("Surveys")
+
+        new_survey = Survey(
+            id=data["id"],
+            title=data["title"],
+            subtitle=data["subtitle"],
+            description=data["description"],
+            client_id=client.id,
+            deadline=data["deadline"],
+            handInDate=data["handInDate"],
+            question_ids=data["question_ids"],
+            scale_options=scale_options,
+            stage_collection=stages_coll,
+            survey_collection=surveys_coll
         )
+        new_survey.fetch_questions()
+        inserted_id = new_survey.insert_survey()
+        logger.info(f"Survey inserted in Mongo with _id={inserted_id}")
 
-        # Fetch questions and insert survey
-        survey.fetch_questions()
-        survey_id = survey.insert_survey()
+        # 5. Asignar encuestas en SQL
+        employees = db.session.query(Employee).filter_by(client_id=client.id).all()
+        if not employees:
+            logger.warning(f"No employees found for client {client.id}; skipping assignment.")
+        else:
+            if survey_type.lower() == "enex":
+                # ENEX => evaluamos la compañía => target_type="company", target_employee_id=None
+                for emp in employees:
+                    EmployeeSurveyAssignment.create_assignment({
+                        "employee_id": emp.id,
+                        "survey_id": data["id"],
+                        "survey_type": survey_type,
+                        "target_employee_id": None,
+                        "target_type": "company"
+                    })
 
-        return jsonify({"message": "Created new survey!", "survey_id": str(survey_id)}), 201
+            elif survey_type.lower() == "360":
+
+                evaluator_map = assign_360_evaluators_spectral(employees)
+                
+                for target_emp_id, respondent_list in evaluator_map.items():
+                    for resp_id in respondent_list:
+                        EmployeeSurveyAssignment.create_assignment({
+                            "employee_id": resp_id,            # Quien responde
+                            "survey_id": data["id"],          # La encuesta
+                            "survey_type": survey_type,
+                            "target_employee_id": target_emp_id,  # El evaluado
+                            "target_type": "employee"
+                        })
+
+        db.session.commit()
+
+        return jsonify({"message": "Created new survey", "survey_id": data["id"]}), 201
 
     except Exception as e:
         logger.critical("Error creating survey", exc_info=e)
-        return jsonify({"error": "Internal Server Error"}), 500
-
-
-@survey.route("/", methods=["GET"])
-def get_surveys():
-    try:
-        db = current_app.mongo_db
-        if not db:
-            return jsonify({"error": "Database not initialized"}), 500
-
-        surveys_collection = db.get_collection("Surveys")
-
-        # Fetch all surveys
-        surveys_cursor = surveys_collection.find()
-        response = [survey for survey in surveys_cursor]
-
-        if not response:
-            return jsonify({"message": "No surveys found"}), 404
-
-        return jsonify(response), 200
-    except Exception as e:
-        logger.critical("Error getting surveys", exc_info=e)
-        return jsonify({"error": "Internal Server Error"}), 500
-
-
-@survey.route("/<id>", methods=["GET"])
-def get_survey(id):
-    try:
-        db = current_app.mongo_db
-        if not db:
-            return jsonify({"error": "Database not initialized"}), 500
-
-        surveys_collection = db.get_collection("Surveys")
-
-        # Fetch a single survey
-        survey = surveys_collection.find_one({"_id": id})
-        if not survey:
-            return jsonify({"message": "Survey not found"}), 404
-
-        return jsonify(survey), 200
-    except Exception as e:
-        logger.critical("Error getting survey", exc_info=e)
-        return jsonify({"error": "Internal Server Error"}), 500
-
-
-@survey.route("/<id>", methods=["PUT"])
-def update_survey(id):
-    try:
-        update_data = request.json
-
-        if not update_data:
-            logger.error("No update data provided")
-            return jsonify({"error": "No update data provided"}), 400
-
-        db = current_app.mongo_db
-        if not db:
-            return jsonify({"error": "Database not initialized"}), 500
-
-        surveys_collection = db.get_collection("Surveys")
-
-        # Update the survey
-        result = surveys_collection.update_one({"id": id}, {"$set": update_data})
-        if result.modified_count == 0:
-            return jsonify({"message": "No data updated. Survey may not exist."}), 404
-
-        return jsonify({"message": "Survey updated successfully."}), 200
-    except Exception as e:
-        logger.critical("Error updating survey", exc_info=e)
-        return jsonify({"error": "Internal Server Error"}), 500
-
-
-@survey.route("/<id>", methods=["DELETE"])
-def delete_survey(id):
-    try:
-        db = current_app.mongo_db
-        if not db:
-            return jsonify({"error": "Database not initialized"}), 500
-
-        surveys_collection = db.get_collection("Surveys")
-
-        # Delete the survey
-        result = surveys_collection.delete_one({"id": id})
-        if result.deleted_count == 0:
-            return jsonify({"message": "No data deleted. Survey may not exist."}), 404
-
-        return jsonify({"message": "Survey deleted successfully."}), 200
-    except Exception as e:
-        logger.critical("Error deleting survey", exc_info=e)
+        db.session.rollback()
         return jsonify({"error": "Internal Server Error"}), 500

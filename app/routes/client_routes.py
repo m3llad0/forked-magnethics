@@ -10,16 +10,16 @@ def create_client():
     try:
         data = request.json
 
-        required_fields = ["id","company_name","business_name", "group_name", "holding_group","country", "primary_contact", "contact_email","contact_phone"]
+        required_fields = ["company_name","business_name", "group_name", "holding_group","country", "primary_contact", "contact_email","contact_phone"]
 
         if not all(field in data for field in required_fields):
             logger.error("Missing fields in body")
             return jsonify({"error": "Missing required fields"}), 400
         
         client = Client.create_client(data)
-        # logger.info(f"Created new client {data['company_name']}")
+        logger.info(f"Created new client {data["company_name"]}")
 
-        return jsonify({"message": "Created new employee"}), 200
+        return jsonify({"message": "Client created"}), 200
     except Exception as e:
         logger.error({"error": str(e)})
         return jsonify({"error": "Internal Server Error"}), 500
@@ -29,7 +29,7 @@ def get_all_clients():
     try:
         clients = Client.query.all()
 
-        return jsonify({"data": [client.to_dict() for client in clients]})
+        return jsonify([client.to_dict() for client in clients])
     except Exception as e:
         logger.critical("Failed to gather clients", exc_info=e)                
         return jsonify({"error": "Internal Server Error"}), 500
@@ -42,7 +42,7 @@ def get_one_client(id):
         if client is None:
             return jsonify({"error": "Client doesn't exist"}), 404
 
-        return jsonify({"data": client.to_dict()}), 200
+        return jsonify(client.to_dict()), 200
     except Exception as e:
         logger.critical("Failed to gather client", exc_info=e)                
         return jsonify({"error": "Internal Server Error"}), 500
@@ -72,9 +72,9 @@ def delete_employee(id):
         result = Client.delete_client(id)
 
         if not result:
-            return jsonify({"error": "Employee doesnt exist"}), 404
+            return jsonify({"error": "Client doesnt exist"}), 404
         
-        return jsonify({"message": "Employee deleted"})
+        return jsonify({"message": "Client deleted"})
     except Exception as e:
         logger.critical("Error deleting client", xc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500

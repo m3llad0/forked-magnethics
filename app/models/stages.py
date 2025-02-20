@@ -1,4 +1,5 @@
 from pymongo.collection import Collection
+from bson.objectid import ObjectId
 
 class Stages:
     def __init__(self, stage_id, producto, stage_name, description, test_items, collection: Collection):
@@ -8,7 +9,6 @@ class Stages:
         self.description = description
         self.test_items = test_items
         self.collection = collection
-
 
     def to_dict(self):
         return {
@@ -23,25 +23,17 @@ class Stages:
         result = self.collection.insert_one(self.to_dict())
 
         return result.inserted_id
-    
+
     def get_one(self, stage_id):
-        stage = self.collection.find_one({"_id": stage_id})
+        return self.collection.find_one({"_id": ObjectId(stage_id)}) or {}
 
-        if stage:
-            return stage
-    
     def get_all(self):
-        stages = self.collection.find()
+        return list(self.collection.find())
 
-        if stages:
-            return stages
-        
     def delete_one(self, stage_id):
-
-        result = self.collection.delete_one({"id": stage_id})
-
+        result = self.collection.delete_one({"_id": ObjectId(stage_id)})
         return result.deleted_count
-    
+
     def update(self, stage_id, updates):
-        result = self.collection.update_one({"id": stage_id}, {"$set": updates})
+        result = self.collection.update_one({"_id": ObjectId(stage_id)}, {"$set": updates})
         return result.modified_count

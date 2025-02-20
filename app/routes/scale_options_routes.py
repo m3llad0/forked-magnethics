@@ -1,5 +1,6 @@
 from flask import request, jsonify, Blueprint, current_app
 from app.models import ScaleOptions
+from bson.objectid import ObjectId
 from app.utils import logger
 
 scale_options = Blueprint("scale-options", __name__)
@@ -37,8 +38,12 @@ def get_options():
             return jsonify({"error": "Database not initialized"}), 500
 
         options = db.get_collection("ScaleOptions").find()
+        options_list = []
+        for option in options:
+            option["_id"] = str(option["_id"])
+            options_list.append(option)
 
-        return jsonify(options), 200
+        return jsonify(options_list), 200
     except Exception as e:
         logger.critical("Error getting scale options", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
@@ -50,12 +55,16 @@ def get_option(id):
         if not db:
             return jsonify({"error": "Database not initialized"}), 500
 
-        scale_options = ScaleOptions(scale_options=[{"":"", "":""}], scale_options_collection=db.get_collection("ScaleOptions"))
-        option = scale_options.get_scale_options(id)
+        scale_options_coll = db.get_collection("ScaleOptions")
+        option = scale_options_coll.find_one({"_id": ObjectId(id)})
 
+        if not option:
+            return jsonify({"error": "Scale option not found"}), 404
+
+        option["_id"] = str(option["_id"])
         return jsonify(option), 200
     except Exception as e:
-        logger.critical("Error getting scale options", exc_info=e)
+        logger.critical("Error getting scale option", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
     
 @scale_options.route("/<id>", methods=["PUT"])
@@ -75,7 +84,10 @@ def update_option(id):
 
         scale_options_coll = db.get_collection("ScaleOptions")
 
-        scale_options_coll.update_one({"_id": id}, {"$set": {"scaleOptions": scale_options_data["scale_options"]}})
+        result = scale_options_coll.update_one({"_id": ObjectId(id)}, {"$set": {"scaleOptions": scale_options_data["scale_options"]}})
+
+        if result.matched_count == 0:
+            return jsonify({"error": "Scale option not found"}), 404
 
         return jsonify({"message": "Updated scale options!"}), 200
     except Exception as e:
@@ -91,7 +103,10 @@ def delete_option(id):
 
         scale_options_coll = db.get_collection("ScaleOptions")
 
-        scale_options_coll.delete_one({"_id": id})
+        result = scale_options_coll.delete_one({"_id": ObjectId(id)})
+
+        if result.deleted_count == 0:
+            return jsonify({"error": "Scale option not found"}), 404
 
         return jsonify({"message": "Deleted scale options!"}), 200
     except Exception as e:

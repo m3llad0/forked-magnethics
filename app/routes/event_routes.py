@@ -1,5 +1,3 @@
-# app/routes/event_routes.py
-
 from flask import request, jsonify, Blueprint
 from datetime import datetime
 from app.models.event import Event
@@ -14,21 +12,24 @@ def create_event():
         
         # Ajustamos required_fields
         required_fields = [
-            "id", 
+            "name",
             "begin_date", 
             "end_date",
-            "survey_id",    # Este es el ID de la encuesta en Mongo
+            #"survey_id", optional when creating the event, can be added later|
+            "product_id",
             "client_id",
-            "survey_type"   # e.g. "360" o "Enex"
         ]
 
         if not all(field in data for field in required_fields):
             logger.error("Missing fields in body")
             return jsonify({"error": "Missing required fields"}), 400
+        
+        data['begin_date'] = datetime.strptime(data['begin_date'], '%d/%m/%Y').strftime('%Y-%m-%d')
+        data['end_date'] = datetime.strptime(data['end_date'], '%d/%m/%Y').strftime('%Y-%m-%d')
 
         event = Event.create_event(data)
         logger.info(
-            f"Created new event {data['id']} with survey_id={data['survey_id']} and type={data['survey_type']}"
+            f"Created new event {event.name} from {event.begin_date} to {event.end_date}"
         )
 
         return jsonify({
@@ -43,7 +44,7 @@ def create_event():
 def get_all_events():
     try:
         events = Event.query.all()
-        return jsonify({"data": [event.to_dict() for event in events]}), 200
+        return jsonify([event.to_dict() for event in events]), 200
     except Exception as e:
         logger.critical("Failed to gather events", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
@@ -54,7 +55,7 @@ def get_one_event(id):
         event = Event.query.get(id)
         if event is None:
             return jsonify({"error": "Event doesn't exist"}), 404
-        return jsonify({"data": event.to_dict()}), 200
+        return jsonify(event.to_dict()), 200
     except Exception as e:
         logger.critical("Failed to gather event", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
