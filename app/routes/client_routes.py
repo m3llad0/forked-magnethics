@@ -17,7 +17,7 @@ def create_client():
             return jsonify({"error": "Missing required fields"}), 400
         
         client = Client.create_client(data)
-        logger.info(f"Created new client {data["company_name"]}")
+        logger.info(f"Created new client")
 
         return jsonify({"message": "Client created"}), 200
     except Exception as e:
