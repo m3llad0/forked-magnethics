@@ -1,11 +1,13 @@
 from flask import request, jsonify, Blueprint, current_app
 from app.models import Stages
 from app.utils import logger
+from app.middleware import postman_consultant_token_required
 import app
 
 stage = Blueprint("stage", __name__)
 
 @stage.route("/", methods=["POST"])
+@postman_consultant_token_required
 def create_stage():
     try:
         stage_data = request.json
@@ -37,6 +39,7 @@ def create_stage():
 
 
 @stage.route("/", methods=["GET"])
+@postman_consultant_token_required
 def get_stages():
     try:
         db = current_app.mongo_db
@@ -62,6 +65,7 @@ def get_stages():
 
 
 @stage.route("/<id>", methods=["GET"])
+@postman_consultant_token_required
 def get_stage(id):
     try:
         db = current_app.mongo_db
@@ -82,6 +86,7 @@ def get_stage(id):
 
 
 @stage.route("/<id>", methods=["PUT"])
+@postman_consultant_token_required
 def update_stage(id):
     try:
         update_data = request.json
@@ -108,6 +113,7 @@ def update_stage(id):
 
 
 @stage.route("/<id>", methods=["DELETE"])
+@postman_consultant_token_required
 def delete_stage(id):
     try:
         db = current_app.mongo_db

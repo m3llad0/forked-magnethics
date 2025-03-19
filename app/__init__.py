@@ -5,7 +5,7 @@ from flask_cors import CORS
 from sqlalchemy import inspect
 from flask import current_app
 import app.models
-from app.routes import stage, bp, survey, answers, scale_options, client, event, product
+from app.routes import stage, bp, survey, answers, scale_options, client, event, product, consultant
 
 # Initialize the FlaskServer instance
 server = FlaskServer(
@@ -23,6 +23,7 @@ server.add_blueprint(scale_options, url_prefix="/scale-options")
 server.add_blueprint(client, url_prefix="/client")
 server.add_blueprint(event, url_prefix="/event")
 server.add_blueprint(product, url_prefix="/product")
+server.add_blueprint(consultant, url_prefix="/consultant")
 
 # Create the Flask app
 app = server.create_app()

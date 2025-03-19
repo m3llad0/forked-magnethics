@@ -4,7 +4,7 @@ from app.services import db
 class Consultant(db.Model):
     __tablename__ = 'consultant'
     
-    id = db.Column(db.Integer, primary_key=True)
+    id = db.Column(db.String(255), primary_key=True)
     name = db.Column(db.String(255), nullable=False, index=True)
     lastname = db.Column(db.String(255), nullable=False, index=True)
 

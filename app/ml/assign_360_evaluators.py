@@ -6,33 +6,39 @@ def assign_360_evaluators_spectral(employees, num_clusters=3):
     """
     Uses Spectral Clustering to assign evaluators to employees.
 
-    :param employees: List of employee dictionaries.
+    :param employees: List of employee objects.
     :param num_clusters: Number of clusters to form.
-
     :return: Dictionary { evaluator_id: [peer_1_id, peer_2_id, ...] }
     """
+    # Convert each employee to a dictionary.
     employees = [employee.to_dict() for employee in employees]
+
+    # If there's fewer than 2 employees, no clustering/assignment can be made.
+    if len(employees) < 2:
+        return {}
+
     G = nx.Graph()
 
-    # Step 1: Add employees as nodes
+    # Step 1: Add employees as nodes.
     for employee in employees:
-        # print(employee.to_dict()["id"])
         G.add_node(str(employee["id"]))
 
-    # Step 2: Add edges based on organizational relationships
+    # Step 2: Add edges based on organizational relationships.
     for employee in employees:
         emp_id = str(employee["id"])
-        
         if employee.get("direct_supervisor_id"):
-            G.add_edge(emp_id, str(employee["direct_supervisor_id"]), weight=2.0)  # Stronger link
-        
+            G.add_edge(emp_id, str(employee["direct_supervisor_id"]), weight=2.0)
         if employee.get("functional_supervisor_id"):
             G.add_edge(emp_id, str(employee["functional_supervisor_id"]), weight=1.5)
 
-    # Step 3: Convert graph to adjacency matrix
+    # Step 3: Convert graph to an adjacency matrix.
     adjacency_matrix = nx.to_numpy_array(G)
 
-    # Step 4: Apply Spectral Clustering
+    # Double-check: if somehow there's only one node, return empty.
+    if adjacency_matrix.shape[0] < 2:
+        return {}
+
+    # Step 4: Apply Spectral Clustering.
     clustering = SpectralClustering(
         n_clusters=min(num_clusters, len(employees)),
         affinity="precomputed",
@@ -41,12 +47,13 @@ def assign_360_evaluators_spectral(employees, num_clusters=3):
 
     labels = clustering.labels_
 
-    # Step 5: Assign evaluators based on clusters
+    # Step 5: Group employees by cluster.
     clustered_employees = {}
     for i, employee in enumerate(employees):
         cluster_id = labels[i]
         clustered_employees.setdefault(cluster_id, []).append(str(employee["id"]))
 
+    # Step 6: Build evaluator assignments.
     evaluator_assignments = {}
     for cluster in clustered_employees.values():
         if len(cluster) > 1:

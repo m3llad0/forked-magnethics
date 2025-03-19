@@ -11,7 +11,7 @@ class Event(db.Model):
     end_date = db.Column(db.Date, nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'))
     survey_id = db.Column(db.String(255), nullable=True)
-    client_id = db.Column(db.Integer, db.ForeignKey('client.id'))
+    client_id = db.Column(db.String(255), db.ForeignKey('client.id'))
 
     product = db.relationship('Product', back_populates='events', lazy=True)
     client = db.relationship('Client', backref='events', lazy=True)

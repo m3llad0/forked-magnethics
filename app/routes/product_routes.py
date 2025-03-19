@@ -1,11 +1,13 @@
 from flask import request, jsonify, Blueprint
 from app.models.product import Product
 from app.utils import logger
+from app.middleware import postman_consultant_token_required
 
 
 product = Blueprint("product", __name__)
 
 @product.route("/", methods=["POST"])
+@postman_consultant_token_required
 def create_product():
     try:
         data = request.json
@@ -22,6 +24,7 @@ def create_product():
         return jsonify({"error": "Internal Server Error"}), 500
     
 @product.route("/", methods=["GET"])
+@postman_consultant_token_required
 def get_all_products():
     try:
         products = Product.query.all()
@@ -31,6 +34,7 @@ def get_all_products():
         return jsonify({"error": "Internal Server Error"}), 500
 
 @product.route("/<id>", methods=["GET"])
+@postman_consultant_token_required
 def get_one_product(id):
     try:
         product = Product.query.get(id)
@@ -42,6 +46,7 @@ def get_one_product(id):
         return jsonify({"error": "Internal Server Error"}), 500
 
 @product.route("/<id>", methods=["PUT"])
+@postman_consultant_token_required
 def update_product(id):
     try:
         data = request.json
@@ -52,6 +57,7 @@ def update_product(id):
         return jsonify({"error": "Internal Server Error"}), 500
 
 @product.route("/<id>", methods=["DELETE"])
+@postman_consultant_token_required
 def delete_product(id):
     try:
         Product.delete_product(id)

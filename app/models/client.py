@@ -1,3 +1,5 @@
+# app/models/client.py
+
 from app.services import db
 from datetime import datetime
 import enum
@@ -12,7 +14,7 @@ class ClientStatus(enum.Enum):
 class Client(db.Model):
     __tablename__ = 'client'
     
-    id = db.Column(db.Integer, primary_key=True)
+    id = db.Column(db.String(255), primary_key=True)
     company_name = db.Column(db.String(255), nullable=False)
     business_name = db.Column(db.String(255), nullable=False)
     group_name = db.Column(db.String(255))
@@ -21,7 +23,7 @@ class Client(db.Model):
     primary_contact = db.Column(db.String(255))
     contact_email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     contact_phone = db.Column(db.String(50))
-    account_executive_id = db.Column(db.Integer, db.ForeignKey('consultant.id'), index=True)
+    account_executive_id = db.Column(db.String(255), db.ForeignKey('consultant.id'), index=True)
     status = db.Column(db.Enum(ClientStatus), default=ClientStatus.ACTIVE)
     registration_date = db.Column(db.Date, default=datetime.utcnow)
     last_modification_date = db.Column(db.Date, default=datetime.utcnow, onupdate=datetime.utcnow)

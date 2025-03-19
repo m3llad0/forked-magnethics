@@ -2,10 +2,12 @@ from flask import request, jsonify, Blueprint
 from datetime import datetime
 from app.models.event import Event
 from app.utils import logger
+from app.middleware import postman_consultant_token_required
 
 event = Blueprint("event", __name__)
 
 @event.route("/", methods=["POST"])
+@postman_consultant_token_required
 def create_event():
     try:
         data = request.json
@@ -41,6 +43,7 @@ def create_event():
         return jsonify({"error": "Internal Server Error"}), 500
 
 @event.route("/", methods=["GET"])
+@postman_consultant_token_required
 def get_all_events():
     try:
         events = Event.query.all()
@@ -50,6 +53,7 @@ def get_all_events():
         return jsonify({"error": "Internal Server Error"}), 500
 
 @event.route("/<id>", methods=["GET"])
+@postman_consultant_token_required
 def get_one_event(id):
     try:
         event = Event.query.get(id)
@@ -61,6 +65,7 @@ def get_one_event(id):
         return jsonify({"error": "Internal Server Error"}), 500
 
 @event.route("/<id>", methods=["PUT"])
+@postman_consultant_token_required
 def update_event(id):
     try:
         data = request.json
@@ -80,6 +85,7 @@ def update_event(id):
         return jsonify({"error": "Internal Server Error"}), 500
 
 @event.route("/<id>", methods=["DELETE"])
+@postman_consultant_token_required
 def delete_event(id):
     try:
         result = Event.delete_event(id)
