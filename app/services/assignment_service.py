@@ -1,7 +1,6 @@
 from io import BytesIO
 import pandas as pd
 from flask import current_app
-# from app.services import db
 from app.models.product import Product
 from app.models.employee import Employee
 from app.models.employee_survey_assignment import EmployeeSurveyAssignment
@@ -9,30 +8,26 @@ from app.utils import logger
 
 class AssignmentService:
     def __init__(self, db):
-            self.db = db
+        self.db = db
+
     def determine_survey_type(self, survey_doc):
         """
-        Determines the survey type in a flexible manner.
-        - If the survey document already specifies a survey_type, use it.
-        - Otherwise, infer from the product name using a configurable mapping.
+        Determina el tipo de encuesta de forma flexible.
+        - Si el documento de encuesta ya especifica survey_type, lo usa.
+        - De lo contrario, lo infiere a partir del nombre del producto utilizando un mapeo configurable.
         """
-
-
-        # Use survey_type from the document if present.
         if "survey_type" in survey_doc and survey_doc["survey_type"]:
             return survey_doc["survey_type"].lower()
 
-        # Otherwise, retrieve the product and use a mapping.
+        # Si no se especifica, se obtiene el producto y se usa un mapeo
         product_obj = self.db.session.get(Product, survey_doc.get("product_id"))
         if not product_obj:
             raise ValueError("Product not found")
 
         product_name = product_obj.name.lower()
-        # Mapping to determine survey type based on keywords in product name.
         mapping = {
             "enex": "enex",
             "360": "360"
-            # Add more mappings here if needed in the future.
         }
         for key, survey_type in mapping.items():
             if key in product_name:
@@ -42,14 +37,14 @@ class AssignmentService:
 
     def generate_assignment_excel(self, survey_id, client_id):
         """
-        Generates an Excel file containing an organization chart based on employees for the given client.
-        This file will include:
-            - Employee details (employee_id, employee_number, first_name, last_name, email, position)
-            - Their direct and functional supervisor names
-            - Survey details (survey_id, survey_type)
-            - For ENEX surveys: target_employee_id is None, target_type is "company"
-            - For 360 surveys: target_employee_id is left blank and target_type is "employee"
-        The client can then modify this file to select who will answer the surveys.
+        Genera un archivo Excel con el organigrama basado en los empleados para el cliente dado.
+        
+        El archivo contendrá:
+          - Detalles del evaluador: employee_number, first_name, last_name, email, position,
+            direct_supervisor y functional_supervisor (rellenados automáticamente).
+          - Detalles de la encuesta: survey_id y survey_type.
+          - Para encuestas ENEX: target_employee_number será None y target_type "company".
+          - Para encuestas 360: target_employee_number se deja en blanco (a completar por el cliente) y target_type "employee".
         """
         mongo_db = current_app.mongo_db
         surveys_coll = mongo_db.get_collection("Surveys")
@@ -57,19 +52,17 @@ class AssignmentService:
         if not survey_doc:
             raise ValueError("Survey not found")
         
-        # Determine survey type using the new flexible method.
         survey_type = self.determine_survey_type(survey_doc)
         
-        # Fetch employees for the client
+        # Se obtienen los empleados asociados al cliente
         employees = self.db.session.query(Employee).filter_by(client_id=client_id).all()
         if not employees:
             raise ValueError("No employees found for the client")
-        # Build a dictionary for quick lookup (for supervisor names)
+        # Diccionario para búsqueda rápida (para nombres de supervisores)
         employees_dict = {emp.id: emp for emp in employees}
         
         assignment_rows = []
         for emp in employees:
-            # Get supervisor names (if available)
             direct_sup_name = ""
             if emp.direct_supervisor_id:
                 direct_sup = employees_dict.get(emp.direct_supervisor_id) or self.db.session.get(Employee, emp.direct_supervisor_id)
@@ -81,8 +74,8 @@ class AssignmentService:
                 if func_sup:
                     func_sup_name = f"{func_sup.first_name} {func_sup.last_name_paternal}"
             
+            # Se utiliza el número de empleado, sin exponer el ID interno
             row = {
-                "employee_id": emp.id,
                 "employee_number": emp.employee_number,
                 "first_name": emp.first_name,
                 "last_name": f"{emp.last_name_paternal} {emp.last_name_maternal or ''}".strip(),
@@ -94,14 +87,13 @@ class AssignmentService:
                 "survey_type": survey_type,
             }
             if survey_type == "enex":
-                row["target_employee_id"] = None
+                row["target_employee_number"] = None
                 row["target_type"] = "company"
             elif survey_type == "360":
-                row["target_employee_id"] = ""  # To be filled by the client manually
+                row["target_employee_number"] = ""  # El cliente completará este campo con el número de empleado del evaluado
                 row["target_type"] = "employee"
             assignment_rows.append(row)
         
-        # Create a DataFrame and write to Excel in memory
         df = pd.DataFrame(assignment_rows)
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -112,24 +104,51 @@ class AssignmentService:
 
     def finalize_assignment(self, df):
         """
-        Accepts a DataFrame read from an uploaded Excel file and finalizes the assignments
-        by creating records in the EmployeeSurveyAssignment table.
+        Procesa un DataFrame (leído de un archivo Excel) y finaliza las asignaciones
+        creando registros en la tabla EmployeeSurveyAssignment.
+        
+        Ahora, el archivo Excel usa la columna "employee_number" para el evaluador y
+        "target_employee_number" para el evaluado. En esta última, se pueden escribir
+        múltiples números (separados por comas), generándose una asignación para cada uno.
         """
         assignments = []
+        from app.models.employee import Employee
+
         for idx, row in df.iterrows():
-            if pd.notna(row["target_employee_id"]) and pd.notna(row["survey_id"]):
-                print(row)
+            if pd.notna(row.get("employee_number")) and pd.notna(row.get("survey_id")):
                 try:
-                    assignment_data = {
-                        "employee_id": row["employee_id"],
-                        "survey_id": row["survey_id"],
-                        "survey_type": row["survey_type"],
-                        "target_employee_id": row["target_employee_id"],
-                        "target_type": row["target_type"]
-                    }
-                    assignment = EmployeeSurveyAssignment.create_assignment(assignment_data)
-                    assignments.append(assignment.to_dict())
+                    evaluator = self.db.session.query(Employee).filter_by(
+                        employee_number=row["employee_number"]
+                    ).first()
+                    if not evaluator:
+                        logger.error(f"No se encontró evaluador con employee_number: {row['employee_number']}")
+                        continue
+
+                    raw_targets = row.get("target_employee_number")
+                    if pd.isna(raw_targets):
+                        logger.error(f"No se especificaron evaluados para el evaluador {row['employee_number']}")
+                        continue
+
+                    target_numbers = [num.strip() for num in str(raw_targets).split(",") if num.strip()]
+
+                    for target_num in target_numbers:
+                        target_employee = self.db.session.query(Employee).filter_by(
+                            employee_number=target_num
+                        ).first()
+                        if not target_employee:
+                            logger.error(f"No se encontró evaluado con employee_number: {target_num}")
+                            continue
+
+                        assignment_data = {
+                            "employee_id": evaluator.id,
+                            "survey_id": row["survey_id"],
+                            "survey_type": row["survey_type"],
+                            "target_employee_id": target_employee.id,
+                            "target_type": row["target_type"]
+                        }
+                        assignment = EmployeeSurveyAssignment.create_assignment(assignment_data)
+                        assignments.append(assignment.to_dict())
                 except Exception as inner_e:
-                    logger.error(f"Error processing row {idx}: {inner_e}")
+                    logger.error(f"Error procesando la fila {idx}: {inner_e}")
         self.db.session.commit()
         return assignments

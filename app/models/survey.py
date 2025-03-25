@@ -48,22 +48,40 @@ class Survey:
         Para encuestas 360 se asigna directamente la lista de opciones.
         """
         blocks = []
-        for stage_id in self.stage_ids:
+        for test_item_id in self.stage_ids:
             try:
-                stage = self.stage_collection.find_one({"_id": stage_id})
+                # Buscamos el documento que tenga un bloque (test_item) con id igual a test_item_id.
+                stage = self.stage_collection.find_one({"test_item.id": test_item_id})
                 if stage:
                     test_items = stage.get("test_item", [])
                     for item in test_items:
+                        # Procesamos solo el bloque cuyo id coincide
+                        if item.get("id") != test_item_id:
+                            continue
+
+                        # Filtrar las preguntas según "employee_type"
+                        questions_raw = item.get("questions", [])
+                        filtered_questions = []
+                        for question in questions_raw:
+                            employee_type = question.get("employee_type", "Ambos").lower()
+                            if self.sindicalizados:
+                                if employee_type in ["ambos", "sindicalizados"]:
+                                    filtered_questions.append(question)
+                            else:
+                                if employee_type == "ambos":
+                                    filtered_questions.append(question)
+
                         block = {
                             "title": item.get("name", ""),
                             "description": item.get("instruction", ""),
-                            "questions": item.get("questions", [])
+                            "questions": filtered_questions
                         }
-                        # Asignar el scale point según el tipo de encuesta y la etapa.
-                        if self.survey_type == "enex":
-                            if stage_id.startswith("EP1"):
+                        # Asignar las scale options según el tipo de encuesta.
+                        if self.survey_type.lower() == "enex":
+                            # Se basa en el _id del documento stage
+                            if stage.get("_id", "").startswith("EP1"):
                                 block["scaleOptions"] = self.scale_options.get("aspect1", [])
-                            elif stage_id.startswith("EP2"):
+                            elif stage.get("_id", "").startswith("EP2"):
                                 block["scaleOptions"] = self.scale_options.get("aspect2", [])
                             else:
                                 block["scaleOptions"] = []
@@ -71,9 +89,9 @@ class Survey:
                             block["scaleOptions"] = self.scale_options
                         blocks.append(block)
                 else:
-                    logger.warning(f"Stage with id {stage_id} not found")
+                    logger.warning(f"Stage with test_item id {test_item_id} not found")
             except Exception as e:
-                logger.error(f"Error fetching stage {stage_id}: {e}")
+                logger.error(f"Error fetching stage with test_item id {test_item_id}: {e}")
         self.questions = blocks
 
 

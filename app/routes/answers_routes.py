@@ -21,6 +21,7 @@ def save_survey_progress(survey_id):
     """
     try:
         data = request.json
+        logger.info(data)
         if not data or "employee_answers" not in data:
             logger.error("Missing 'employee_answers' in request body")
             return jsonify({"error": "Invalid request data"}), 400
@@ -319,24 +320,17 @@ def delete_survey_answers(survey_id):
 @answers.route('/surveys/status', methods=['GET'])
 @token_required()
 def get_surveys_by_status():
-    """
-    Categorizes surveys (pending, in_progress, completed) for the authenticated user.
-    The employee_id is retrieved from the token (g.user_id).
-    """
     try:
         employee_id = g.user_id
-
         mongo_db = current_app.mongo_db
         if not mongo_db:
             return jsonify({"error": "Database not initialized"}), 500
 
         surveys_coll = mongo_db.get_collection("Surveys")
         answers_coll = mongo_db.get_collection("SurveyAnswers")
-
-        all_surveys = list(surveys_coll.find())
-        if not all_surveys:
-            logger.info("No surveys found")
-            return jsonify({"pending": [], "in_progress": [], "completed": []}), 200
+        
+        # Se obtienen todas las asignaciones del evaluador autenticado.
+        assignments = db.session.query(EmployeeSurveyAssignment).filter_by(employee_id=employee_id).all()
 
         categorized = {
             "pending": [],
@@ -344,36 +338,25 @@ def get_surveys_by_status():
             "completed": []
         }
 
-        for survey_doc in all_surveys:
-            sid = str(survey_doc["_id"])
+        from app.models.employee import Employee
 
-            # Look for questions either in "questionBlocks" or "questions"
-            blocks = survey_doc.get("questionBlocks")
-            if not blocks:
-                blocks = survey_doc.get("questions", [])
+        for assignment in assignments:
+            sid = assignment.survey_id
+            survey_doc = surveys_coll.find_one({"_id": sid})
+            if not survey_doc:
+                continue
 
+            # Calcular el total de preguntas (se buscan en "questionBlocks" o "questions")
+            blocks = survey_doc.get("questionBlocks") or survey_doc.get("questions", [])
             all_questions = []
             for block in blocks:
                 all_questions.extend(block.get("questions", []))
             total_questions = len(all_questions)
-
+            
             if total_questions == 0:
                 logger.warning(f"Survey {sid} has no questions defined.")
-                survey_data = _build_survey_data(sid, survey_doc, 0)
-                categorized["pending"].append(survey_data)
-                continue
-
-            # Fetch assignments from SQL for this survey and user
-            assignments = (db.session.query(EmployeeSurveyAssignment)
-                           .filter_by(employee_id=employee_id, survey_id=sid)
-                           .all())
-            if not assignments:
-                continue
-
-            assignment_progresses = []
-            assignment_completions = []
-            for assignment in assignments:
-                answered_ids = set()
+                progress = 0
+            else:
                 filter_doc = {
                     "survey_id": sid,
                     "employee_id": employee_id,
@@ -381,33 +364,42 @@ def get_surveys_by_status():
                     "target_type": assignment.target_type
                 }
                 all_answer_docs = list(answers_coll.find(filter_doc))
+                answered_ids = set()
                 any_completed = any(doc.get("status") == "completed" for doc in all_answer_docs)
-
                 for ans_doc in all_answer_docs:
                     for answer in ans_doc.get("answers", []):
                         if isinstance(answer, dict) and "question_id" in answer:
                             answered_ids.add(answer["question_id"])
                         else:
                             answered_ids.add(answer)
-                assignment_answered_count = len(answered_ids)
-                logger.debug(
-                    f"Survey {sid} for assignment (target: {assignment.target_employee_id}): "
-                    f"answered {assignment_answered_count} out of {total_questions}"
-                )
-                assignment_progress = (assignment_answered_count / total_questions * 100)
-                assignment_progresses.append(assignment_progress)
-                assignment_completions.append(any_completed)
+                progress = (len(answered_ids) / total_questions * 100)
 
-            avg_progress = sum(assignment_progresses) / len(assignment_progresses)
-            all_assigns_completed = all(assignment_completions)
-            survey_data = _build_survey_data(sid, survey_doc, avg_progress)
-
-            if all_assigns_completed:
-                categorized["completed"].append(survey_data)
-            elif 0 < avg_progress < 100:
-                categorized["in_progress"].append(survey_data)
+            # Categorizar la encuesta
+            if any_completed:
+                category = "completed"
+            elif progress > 0 and progress < 100:
+                category = "in_progress"
             else:
-                categorized["pending"].append(survey_data)
+                category = "pending"
+
+            # Si es encuesta 360, el título se sustituye por el nombre del evaluado
+            title = survey_doc.get("title", "Untitled Survey")
+            if survey_doc.get("survey_type", "").lower() == "360" and assignment.target_employee_id:
+                evaluated = db.session.get(Employee, assignment.target_employee_id)
+                if evaluated:
+                    title = f"{evaluated.first_name} {evaluated.last_name_paternal}"
+
+            survey_data = {
+                "id": sid,
+                "title": title,
+                "target_employee_id": assignment.target_employee_id,
+                "subtitle": survey_doc.get("subtitle", ""),
+                "progress": round(progress, 2),
+                "assignmentDate": survey_doc.get("deadline", ""),
+                "handInDate": survey_doc.get("handInDate", ""),
+                "questions": all_questions
+            }
+            categorized[category].append(survey_data)
 
         return jsonify(categorized), 200
 
@@ -415,36 +407,10 @@ def get_surveys_by_status():
         logger.critical("Error fetching surveys by status", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
 
+
 @answers.route("/<id>", methods=["GET"])
 @token_required()
 def get_survey(id):
-    """
-    Retrieve a survey along with the authenticated user's answers, formatted as SurveyData.
-
-    SurveyData interface:
-      - title: string
-      - subtitle: string
-      - description: string
-      - startTime: string (ISO timestamp)
-      - totalTimeSpent: number (seconds)
-      - questionBlocks: array of QuestionBlock, each:
-          {
-            title: string,
-            description: string,
-            scaleOptions?: [{ label: string, value: number }],
-            questions: [
-              {
-                id: number,
-                type: "scale" | "open",
-                text: string,
-                options?: [{ label: string, value: number }],
-                answer?: number | string | null,
-                minLength?: number,
-                maxLength?: number
-              }
-            ]
-          }
-    """
     try:
         from datetime import datetime
         employee_id = g.user_id
@@ -457,18 +423,25 @@ def get_survey(id):
         if not survey_doc:
             return jsonify({"message": "Survey not found"}), 404
 
-        # Retrieve the answer document for this survey and employee.
+        # Para encuestas 360, se espera que se pase target_employee_id como parámetro para identificar al evaluado
+        if survey_doc.get("survey_type", "").lower() == "360":
+            target_employee_id = request.args.get("target_employee_id")
+            if target_employee_id:
+                from app.models.employee import Employee
+                evaluated = db.session.get(Employee, target_employee_id)
+                if evaluated:
+                    survey_doc["title"] = f"{evaluated.first_name} {evaluated.last_name_paternal}"
+                    survey_doc["taget_employee_id"] = evaluated.id
+
+        # Recuperar respuestas del evaluador (si existen)
         answers_coll = db_mongo.get_collection("SurveyAnswers")
         answer_doc = answers_coll.find_one({"survey_id": id, "employee_id": employee_id})
-
-        # Build a lookup for user answers keyed by the original question id.
         user_answers = {}
         if answer_doc:
             for ans in answer_doc.get("answers", []):
                 key = ans.get("question_id")
                 user_answers[key] = ans.get("answer")
 
-        # Helper: convert a question id string (e.g. "EP1_001_1") to a number by extracting digits.
         def convert_question_id(qid):
             digits = "".join(filter(str.isdigit, qid))
             try:
@@ -476,33 +449,29 @@ def get_survey(id):
             except Exception:
                 return 0
 
-        # In this document, the survey blocks are stored under "questions".
         blocks = survey_doc.get("questions", [])
         transformed_blocks = []
         for block in blocks:
             block_title = block.get("title", "")
             block_description = block.get("description", "")
-            # Each block may have its own scaleOptions.
             block_scale_options = block.get("scaleOptions", [])
             transformed_questions = []
             for q in block.get("questions", []):
                 orig_id = q.get("id", "")
                 q_id = convert_question_id(orig_id)
-                # Map type: "Selección" -> "scale", "Abierta" -> "open".
                 raw_type = q.get("type", "").lower()
                 if "selección" in raw_type or "seleccion" in raw_type:
                     q_type = "scale"
                 elif "abierta" in raw_type:
                     q_type = "open"
                 else:
-                    q_type = "scale"  # default fallback
+                    q_type = "scale"
                 transformed_question = {
                     "id": q_id,
                     "type": q_type,
                     "text": q.get("text", ""),
                     "answer": user_answers.get(orig_id, None)
                 }
-                # For scale questions, attach options (question-level if available, else block-level).
                 if q_type == "scale":
                     if q.get("options") is not None:
                         transformed_question["options"] = [
@@ -514,7 +483,6 @@ def get_survey(id):
                             {"label": opt.get("label", ""), "value": int(opt.get("value", 0))}
                             for opt in block_scale_options
                         ]
-                # Include optional fields if present.
                 if "minLength" in q:
                     transformed_question["minLength"] = q["minLength"]
                 if "maxLength" in q:
@@ -532,11 +500,9 @@ def get_survey(id):
             }
             transformed_blocks.append(transformed_block)
 
-        # Determine startTime.
         if "created_at" in survey_doc:
             created_at = survey_doc["created_at"]
             if isinstance(created_at, dict) and "$date" in created_at:
-                # Extended JSON format.
                 timestamp = int(created_at["$date"].get("$numberLong", 0)) / 1000
                 start_time = datetime.fromtimestamp(timestamp).isoformat()
             elif isinstance(created_at, datetime):
@@ -550,11 +516,8 @@ def get_survey(id):
             "title": survey_doc.get("title", ""),
             "subtitle": survey_doc.get("subtitle", ""),
             "description": survey_doc.get("description", ""),
-            # "startTime": start_time,
-            # "totalTimeSpent": int(survey_doc.get("totalTimeSpent", 0)),
             "questionBlocks": transformed_blocks
         }
-
         return jsonify(survey_data), 200
 
     except Exception as e:
