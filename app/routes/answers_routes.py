@@ -21,7 +21,6 @@ def save_survey_progress(survey_id):
     """
     try:
         data = request.json
-        logger.info(data)
         if not data or "employee_answers" not in data:
             logger.error("Missing 'employee_answers' in request body")
             return jsonify({"error": "Invalid request data"}), 400
@@ -458,7 +457,6 @@ def get_survey(id):
             transformed_questions = []
             for q in block.get("questions", []):
                 orig_id = q.get("id", "")
-                q_id = convert_question_id(orig_id)
                 raw_type = q.get("type", "").lower()
                 if "selección" in raw_type or "seleccion" in raw_type:
                     q_type = "scale"
@@ -467,7 +465,7 @@ def get_survey(id):
                 else:
                     q_type = "scale"
                 transformed_question = {
-                    "id": q_id,
+                    "id": orig_id,
                     "type": q_type,
                     "text": q.get("text", ""),
                     "answer": user_answers.get(orig_id, None)
