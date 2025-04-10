@@ -16,6 +16,7 @@ class Client(db.Model):
     
     id = db.Column(db.String(255), primary_key=True)
     company_name = db.Column(db.String(255), nullable=False)
+    company_rfc = db.Column(db.String(255), unique=True, nullable=False)
     business_name = db.Column(db.String(255), nullable=False)
     group_name = db.Column(db.String(255))
     holding_group = db.Column(db.String(255))
@@ -38,6 +39,10 @@ class Client(db.Model):
             "id": self.id,
             "company_name": self.company_name,
             "business_name": self.business_name,
+            "rfc": self.company_rfc,
+            "group_name": self.group_name,
+            "holding_group": self.holding_group,
+            "contact_email": self.contact_email,
             "country": self.country,
             "primary_contact": self.primary_contact,
         }

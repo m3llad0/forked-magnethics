@@ -2,8 +2,10 @@ from flask import request, jsonify, Blueprint, current_app, g
 from datetime import datetime
 from app.utils import logger
 from app.services import db
-from app.models.employee_survey_assignment import EmployeeSurveyAssignment
-from app.middleware import token_required  # Your custom token decorator
+from app.models import EmployeeSurveyAssignment, Employee
+from app.middleware import token_required 
+from app.services.survey_service import SurveyService
+
 
 answers = Blueprint("answer", __name__)
 
@@ -328,7 +330,6 @@ def get_surveys_by_status():
         surveys_coll = mongo_db.get_collection("Surveys")
         answers_coll = mongo_db.get_collection("SurveyAnswers")
         
-        # Se obtienen todas las asignaciones del evaluador autenticado.
         assignments = db.session.query(EmployeeSurveyAssignment).filter_by(employee_id=employee_id).all()
 
         categorized = {
@@ -345,16 +346,25 @@ def get_surveys_by_status():
             if not survey_doc:
                 continue
 
-            # Calcular el total de preguntas (se buscan en "questionBlocks" o "questions")
+            # Obtener preguntas válidas del survey
             blocks = survey_doc.get("questionBlocks") or survey_doc.get("questions", [])
-            all_questions = []
+            question_ids = set()
             for block in blocks:
-                all_questions.extend(block.get("questions", []))
-            total_questions = len(all_questions)
-            
+                questions = block.get("questions", [])
+                for q in questions:
+                    qid = ""
+                    if isinstance(q, dict):
+                        qid = q.get("id", "")
+                    elif isinstance(q, str):
+                        qid = q
+                    if isinstance(qid, str) and qid.strip():
+                        question_ids.add(qid.strip())
+
+            total_questions = len(question_ids)
             if total_questions == 0:
-                logger.warning(f"Survey {sid} has no questions defined.")
+                logger.warning(f"Survey {sid} has no valid questions.")
                 progress = 0
+                any_completed = False
             else:
                 filter_doc = {
                     "survey_id": sid,
@@ -364,24 +374,36 @@ def get_surveys_by_status():
                 }
                 all_answer_docs = list(answers_coll.find(filter_doc))
                 answered_ids = set()
-                any_completed = any(doc.get("status") == "completed" for doc in all_answer_docs)
                 for ans_doc in all_answer_docs:
                     for answer in ans_doc.get("answers", []):
-                        if isinstance(answer, dict) and "question_id" in answer:
-                            answered_ids.add(answer["question_id"])
-                        else:
-                            answered_ids.add(answer)
-                progress = (len(answered_ids) / total_questions * 100)
+                        qid = ""
+                        value = None
+                        if isinstance(answer, dict):
+                            qid = answer.get("question_id", "")
+                            value = answer.get("answer", None)
+                        elif isinstance(answer, str):
+                            qid = answer
+                            value = answer  # fallback
 
-            # Categorizar la encuesta
+                        if (
+                            isinstance(qid, str)
+                            and qid.strip()
+                            and value not in [None, "", [], {}]
+                        ):
+                            answered_ids.add(qid.strip())
+
+                progress = (len(answered_ids & question_ids) / total_questions) * 100
+                any_completed = any(doc.get("status") == "completed" for doc in all_answer_docs)
+
+            # Determinar la categoría
             if any_completed:
                 category = "completed"
-            elif progress > 0 and progress < 100:
+            elif progress > 0:
                 category = "in_progress"
             else:
                 category = "pending"
 
-            # Si es encuesta 360, el título se sustituye por el nombre del evaluado
+            # Título dinámico para encuestas 360
             title = survey_doc.get("title", "Untitled Survey")
             if survey_doc.get("survey_type", "").lower() == "360" and assignment.target_employee_id:
                 evaluated = db.session.get(Employee, assignment.target_employee_id)
@@ -396,7 +418,7 @@ def get_surveys_by_status():
                 "progress": round(progress, 2),
                 "assignmentDate": survey_doc.get("deadline", ""),
                 "handInDate": survey_doc.get("handInDate", ""),
-                "questions": all_questions
+                "questions": list(question_ids)
             }
             categorized[category].append(survey_data)
 
@@ -407,12 +429,13 @@ def get_surveys_by_status():
         return jsonify({"error": "Internal Server Error"}), 500
 
 
-@answers.route("/<id>", methods=["GET"])
+@answers.route("/<id>/<target_employee_id>", methods=["GET"])
 @token_required()
-def get_survey(id):
+def get_survey(id, target_employee_id):
     try:
         from datetime import datetime
         employee_id = g.user_id
+        print(f"target_employee_id: {target_employee_id}")
         db_mongo = current_app.mongo_db
         if not db_mongo:
             return jsonify({"error": "Database not initialized"}), 500
@@ -424,17 +447,14 @@ def get_survey(id):
 
         # Para encuestas 360, se espera que se pase target_employee_id como parámetro para identificar al evaluado
         if survey_doc.get("survey_type", "").lower() == "360":
-            target_employee_id = request.args.get("target_employee_id")
             if target_employee_id:
-                from app.models.employee import Employee
                 evaluated = db.session.get(Employee, target_employee_id)
                 if evaluated:
                     survey_doc["title"] = f"{evaluated.first_name} {evaluated.last_name_paternal}"
-                    survey_doc["taget_employee_id"] = evaluated.id
-
+                    survey_doc["target_employee_id"] = evaluated.id
         # Recuperar respuestas del evaluador (si existen)
         answers_coll = db_mongo.get_collection("SurveyAnswers")
-        answer_doc = answers_coll.find_one({"survey_id": id, "employee_id": employee_id})
+        answer_doc = answers_coll.find_one({"survey_id": id, "employee_id": employee_id, "target_employee_id": target_employee_id})
         user_answers = {}
         if answer_doc:
             for ans in answer_doc.get("answers", []):
@@ -522,23 +542,22 @@ def get_survey(id):
         logger.critical("Error getting survey", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
 
-def _build_survey_data(sid, survey_doc, progress):
-    """
-    Helper to build a dictionary with basic survey fields.
-    """
-    # Check for questions under "questionBlocks" or "questions"
-    blocks = survey_doc.get("questionBlocks")
-    if not blocks:
-        blocks = survey_doc.get("questions", [])
-    all_questions = []
-    for block in blocks:
-        all_questions.extend(block.get("questions", []))
-    return {
-        "id": sid,
-        "title": survey_doc.get("title", "Untitled Survey"),
-        "subtitle": survey_doc.get("subtitle", ""),
-        "progress": round(progress, 2),
-        "assignmentDate": survey_doc.get("deadline", ""),
-        "handInDate": survey_doc.get("handInDate", ""),
-        "questions": all_questions
-    }
+@answers.route("/<survey_id>/<client_id>", methods=["GET"])
+def get_answers(survey_id, client_id):
+    try:
+        mongo_db = current_app.mongo_db
+
+        if not mongo_db:
+            return jsonify({"error": "Database not initialized"}), 500
+        answer_service = SurveyService(db=db, mongo_db=mongo_db)
+
+        answers = answer_service.get_excel(survey_id, client_id)
+        return current_app.response_class(
+            answers,
+           mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=results_{survey_id}.xlsx"}
+        )
+    except Exception as e:
+        logger.critical("Error getting answers", exc_info=e)
+        return jsonify({"error": "Internal Server Error"}), 500
+        

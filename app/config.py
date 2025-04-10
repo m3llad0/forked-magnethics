@@ -73,6 +73,8 @@ config_by_name = {
 
 def get_config(env_name):
     """Retrieve the config class based on the environment."""
+    if env_name is None:
+        env_name = os.getenv("FLASK_ENV", "development")
     return config_by_name.get(env_name, ProdConfig)
 
 # Create a global Clerk client using the environment-specific configuration.

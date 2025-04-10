@@ -1,4 +1,5 @@
 from pymongo import MongoClient
+from app.utils import logger
 
 
 class Database:
@@ -30,9 +31,9 @@ class Database:
 
             self.client = MongoClient(self.url)
             self.db = self.client[self.databaseName]
-            print("Connected to database!")
+            logger.info("Connected to database!")
         except Exception as e:
-            print(f"Error connecting to database: {e}") 
+            logger.error(f"Error connecting to database: {e}") 
 
     def get_collection(self, collectionName):
         """
@@ -49,7 +50,7 @@ class Database:
                 self.connect()
             return self.db[collectionName]
         except Exception as e:
-            print(f"Error retrieving collection: {e}")
+            logger.error(f"Error retrieving collection: {e}")
             return None
 
     def close_collection(self):
@@ -58,4 +59,5 @@ class Database:
         """
         if self.client is not None:
             self.client.close()
+            logger.info("Connection closed!")
         

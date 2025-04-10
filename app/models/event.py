@@ -55,3 +55,10 @@ class Event(db.Model):
         db.session.delete(event)
         db.session.commit()
         return True
+    
+    @staticmethod
+    def get_event(event_id):
+        event = db.session.get(Event, event_id)
+        if not event:
+            raise ValueError("Event not found")
+        return event.to_dict()

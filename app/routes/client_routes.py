@@ -1,4 +1,4 @@
-from flask import request, jsonify, Blueprint
+from flask import request, jsonify, Blueprint, g
 from app.models import Client
 from app.utils import logger
 from app.config import CLERK_CLIENT
@@ -11,10 +11,11 @@ client = Blueprint("client", __name__)
 def create_client():
     try:
         data = request.json
+        consultant = g.user_id
 
         required_fields = [
             "company_name", "business_name", "group_name", 
-            "holding_group", "country", "primary_contact", 
+            "holding_group","company_rfc", "country", "primary_contact", 
             "contact_email", "contact_phone"
         ]
         if not all(field in data for field in required_fields):
@@ -36,6 +37,8 @@ def create_client():
         new_client = Client.create_client({
             "id": org_response.id,
             "company_name": data["company_name"],
+            "company_rfc": data["company_rfc"],
+            "account_executive_id": consultant,
             "business_name": data["business_name"],
             "group_name": data["group_name"],
             "holding_group": data["holding_group"],

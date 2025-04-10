@@ -1,5 +1,6 @@
 from flask import request, jsonify, Blueprint
-from app.models.employee import Employee
+from app.models import Employee, Client
+from app.services import db
 from app.utils import logger
 from app.config import CLERK_CLIENT
 from app.middleware import postman_consultant_token_required
@@ -14,11 +15,12 @@ def create_employee():
     try:
         data = request.json
 
-        required_fields = [
-            "employee_number", "first_name", "last_name_paternal",
-            "last_name_maternal", "position", "hire_date", "email", "phone_number",
-            "client_id"  # Organization id to which the employee belongs
-        ]
+        required_fields = ["employee_number", "first_name","last_name_paternal",
+                           "last_name_maternal","employee_type","birth_date","sex",
+                           "country","region","city","herichary_level","position",
+                           "area","department","hire_date","email","phone_number",
+                           "floor","direct_supervisor_id","functional_supervisor_id"
+                           ]
         if not all(field in data for field in required_fields):
             logger.error("Missing required fields in body")
             return jsonify({"error": "Missing required fields"}), 400
@@ -45,20 +47,8 @@ def create_employee():
         logger.info(f"Created Clerk user id: {user.id}, organization membership id: {org.id}")
 
         # Create the local Employee record using the Clerk user id.
-        employee = Employee.create_employee({
-            "id": user.id,
-            "employee_number": data["employee_number"],
-            "first_name": data["first_name"],
-            "last_name_paternal": data["last_name_paternal"],
-            "last_name_maternal": data["last_name_maternal"],
-            "position": data["position"],
-            "hire_date": data["hire_date"],
-            "email": data["email"],
-            "phone_number": data["phone_number"],
-            "client_id": data["client_id"],
-            "direct_supervisor_id": data.get("direct_supervisor_id"),
-            "functional_supervisor_id": data.get("functional_supervisor_id")
-        })
+        data["id"] = user.id  # Add the Clerk user ID as the employee's ID
+        employee = Employee.create_employee(**data)
 
         logger.info(f"Created new employee with id {employee.id}")
         return jsonify({"message": "Created new employee", "data": employee.to_dict()}), 201
@@ -66,6 +56,8 @@ def create_employee():
         logger.error(str(ve))
         return jsonify({"error": str(ve)}), 400
     except Exception as e:
+        # CLERK_CLIENT.organization_memberships.delete(org.id)
+        CLERK_CLIENT.users.delete(user.id)
         logger.critical(f"Failed to create new employee with error {e}")
         return jsonify({"error": "Internal Server Error"}), 500
 
@@ -108,7 +100,6 @@ def update_employee(id):
         logger.critical("Failed to update employee", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
 
-
 @bp.route("/<id>", methods=["DELETE"])
 @postman_consultant_token_required
 def delete_employee(id):
@@ -121,9 +112,9 @@ def delete_employee(id):
         logger.critical("Error deleting an employee", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
 
-@bp.route("/upload", methods=["POST"])
+@bp.route("/upload/<client_id>", methods=["POST"])
 @postman_consultant_token_required
-def upload_employees():
+def upload_employees(client_id):
     """
     Upload an Excel or CSV file to create employees in bulk.
     The file must include the following columns (adjust as needed):
@@ -138,95 +129,131 @@ def upload_employees():
       3) Create the local Employee record in the database.
     """
     try:
-        # 1. Retrieve client_id from the query params (e.g., /upload?client_id=org_123)
-        client_id = request.args.get("client_id")
-        if not client_id:
-            return jsonify({"error": "No client_id provided in query parameters"}), 400
+        client = db.session.get(Client, client_id)
+        if not client:
+            return jsonify({"error": f"Client with ID '{client_id}' does not exist"}), 400
 
         # 2. Check if file was provided
         if "file" not in request.files:
             return jsonify({"error": "No file part in the request"}), 400
+
         file = request.files["file"]
         if file.filename == "":
             return jsonify({"error": "No selected file"}), 400
 
-        # 3. Determine file type (Excel or CSV) by extension or content
         filename = file.filename.lower()
         if filename.endswith(".xlsx") or filename.endswith(".xls"):
             df = pd.read_excel(file)
         elif filename.endswith(".csv"):
             df = pd.read_csv(file)
         else:
-            # Attempt to parse as Excel by default
             try:
                 df = pd.read_excel(file)
             except Exception:
                 return jsonify({"error": "Unsupported file format. Provide .xlsx, .xls, or .csv."}), 400
 
-        # 4. Validate required columns (excluding client_id since it's in query params)
-        required_columns = [
-            "employee_number", "first_name", "last_name_paternal",
-            "last_name_maternal", "position", "hire_date", "email", "phone_number"
-        ]
-        missing_cols = [col for col in required_columns if col not in df.columns]
+        # CSV column → model field map
+        column_map = {
+            "ID EMPLEADO": "employee_number",
+            "NOMBRES EMPLEADO": "first_name",
+            "APELLIDO PATERNO": "last_name_paternal",
+            "APELLIDO MATERNO": "last_name_maternal",
+            "TIPO DE EMPLEADO": "employee_type",
+            "FECHA NACIMIENTO": "birth_date",
+            "GÉNERO": "sex",
+            "PAÍS": "country",
+            "REGIÓN": "region",
+            "LOCALIDAD": "city",
+            "NIVEL JERÁRQUICO": "herichary_level",
+            "AREA": "area",
+            "DEPTO": "department",
+            "FECHA INGRESO": "hire_date",
+            "EMAIL": "email",
+            "WHATSAPP": "phone_number",
+            "PLANTA": "floor",
+            "DIRECC": "position",
+            "ID EMPLEADO JEFE DIRECTO": "direct_supervisor_number",
+            "ID EMPLEADO JEFE FUNCIONAL": "functional_supervisor_number"
+        }
+
+        # Check required columns
+        missing_cols = [col for col in column_map if col not in df.columns]
         if missing_cols:
             return jsonify({"error": f"Missing required columns: {missing_cols}"}), 400
 
-        # 5. Iterate over each row, create the Clerk user & local Employee
-        created_employees = []
+        number_to_clerk_id = {}
+        created = []
         errors = []
+        created_employees = []
+
+        # 1. Create Clerk users and initial employees
         for idx, row in df.iterrows():
             try:
-                # Build a dictionary for the required fields
-                data = {
-                    "employee_number": row["employee_number"],
-                    "first_name": row["first_name"],
-                    "last_name_paternal": row["last_name_paternal"],
-                    "last_name_maternal": row["last_name_maternal"],
-                    "position": row["position"],
-                    "hire_date": str(row["hire_date"]),  # Ensure it's a string
-                    "email": row["email"],
-                    "phone_number": row["phone_number"],
-                    "client_id": client_id,  # Use the same org for all employees
-                    "direct_supervisor_id": row.get("direct_supervisor_id"),
-                    "functional_supervisor_id": row.get("functional_supervisor_id")
-                }
+                data = {new: row[old] for old, new in column_map.items()}
 
-                # 5a. Create the user in Clerk
+                # Convert to correct types and strip blanks
+                for k in ["direct_supervisor_number", "functional_supervisor_number"]:
+                    val = data.get(k)
+                    if pd.isna(val) or str(val).strip() == "":
+                        data[k] = None
+                    else:
+                        data[k] = str(val).split(".")[0]  # handle Excel floats
+
+                data["client_id"] = client_id
+
+                # Create Clerk user
                 user = CLERK_CLIENT.users.create(request={
                     "email_address": [data["email"]],
                     "public_metadata": {"user_type": "employee"}
                 })
 
-                # 5b. Add the user to the organization
-                org = CLERK_CLIENT.organization_memberships.create(
-                    organization_id=client_id,
-                    user_id=user.id,
-                    role="org:member"
-                )
+                if not user:
+                    raise ValueError("Failed to create Clerk user")
 
-                if not user or not org:
-                    raise ValueError("Failed to create employee in Clerk (user or org is None)")
+                data["id"] = user.id
+                created_employees.append(user.id)
+                number_to_clerk_id[data["employee_number"]] = user.id
 
-                # 5c. Create the local Employee record
-                data["id"] = user.id  # Use Clerk user ID as the employee's ID
+                # Temporarily remove supervisor info for now
+                sup_data = {
+                    "direct_number": data.pop("direct_supervisor_number", None),
+                    "func_number": data.pop("functional_supervisor_number", None),
+                }
+
                 employee = Employee.create_employee(data)
-                logger.info(f"Created new employee {employee.id} from row {idx}")
-                created_employees.append(employee.to_dict())
+                created.append({**sup_data, "employee": employee})
 
             except Exception as e:
-                # Log the error for this row and continue
                 logger.error(f"Error processing row {idx}: {e}")
                 errors.append({"row": idx, "error": str(e)})
 
-        # 6. Return summary of created employees and any errors
+        # 2. Map supervisor numbers to Clerk IDs
+        for item in created:
+            emp = item["employee"]
+            direct = item.get("direct_number")
+            func = item.get("func_number")
+
+            if direct and direct in number_to_clerk_id:
+                emp.direct_supervisor_id = number_to_clerk_id[direct]
+            if func and func in number_to_clerk_id:
+                emp.functional_supervisor_id = number_to_clerk_id[func]
+
+        db.session.commit()
         return jsonify({
             "message": "Employee upload completed",
-            "created_count": len(created_employees),
-            "created_employees": created_employees,
+            "created_count": len(created),
+            "created_employees": [e["employee"].to_dict() for e in created],
             "errors": errors
         }), 200
 
     except Exception as e:
+        db.session.rollback() 
         logger.critical("Error uploading employees", exc_info=e)
+        for clerk_id in created_employees:
+                print(f"Attempting to delete Clerk user {clerk_id}")
+                try:
+                    CLERK_CLIENT.users.delete(clerk_id)
+                    logger.warning(f"Rolled back Clerk user: {clerk_id}")
+                except Exception as delete_err:
+                    logger.error(f"Failed to delete Clerk user {clerk_id}: {delete_err}")
         return jsonify({"error": "Internal Server Error"}), 500

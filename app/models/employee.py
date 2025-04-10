@@ -11,15 +11,24 @@ class Employee(db.Model):
     first_name = db.Column(db.String(255), nullable=False)
     last_name_paternal = db.Column(db.String(255), nullable=False)
     last_name_maternal = db.Column(db.String(255))
+    employee_type = db.Column(db.String(255), nullable=False)
+    birth_date = db.Column(db.Date, nullable=False)
+    sex = db.Column(db.String(255), nullable=False)
+    country = db.Column(db.String(255), nullable=True)
+    region = db.Column(db.String(255), nullable=False)
+    city = db.Column(db.String(255), nullable=False)
+    herichary_level = db.Column(db.String(255), nullable=False)
     position = db.Column(db.String(255), nullable=False)
-    client_id = db.Column(db.String(255), db.ForeignKey('client.id'), nullable=True)
-    event_id = db.Column(db.Integer, db.ForeignKey('event.id'), nullable=True)
+    area = db.Column(db.String(255), nullable=False)
+    department = db.Column(db.String(255), nullable=False)
     hire_date = db.Column(db.Date, nullable=False)
     email = db.Column(db.String(255), nullable=False, unique=True, index=True)
     phone_number = db.Column(db.String(255), nullable=True)
+    floor = db.Column(db.String(255), nullable=False)
     direct_supervisor_id = db.Column(db.String(255), db.ForeignKey('employees.id'), nullable=True)
     functional_supervisor_id = db.Column(db.String(255), db.ForeignKey('employees.id'), nullable=True)
-
+    client_id = db.Column(db.String(255), db.ForeignKey('client.id'), nullable=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('event.id'), nullable=True)
 
     # Relationships
     client = db.relationship('Client', back_populates='employees', lazy=True)
@@ -53,10 +62,20 @@ class Employee(db.Model):
             "first_name": self.first_name,
             "last_name_paternal": self.last_name_paternal,
             "last_name_maternal": self.last_name_maternal,
+            "employee_type": self.employee_type,
+            "birth_date": str(self.birth_date),
+            "sex": self.sex,
+            "country": self.country,
+            "region": self.region,
+            "city": self.city,
+            "herichary_level": self.herichary_level, 
             "position": self.position,
+            "area": self.area,
+            "department": self.department,
             "hire_date": str(self.hire_date),
             "email": self.email,
             "phone_number": self.phone_number,
+            "floor": self.floor,
             "direct_supervisor_id": self.direct_supervisor_id,
             "functional_supervisor_id": self.functional_supervisor_id,
         }

@@ -4,7 +4,7 @@ from flask_pymongo import PyMongo
 from app.config import get_config
 
 class FlaskServer:
-    def __init__(self, name, db_sql: SQLAlchemy = None, db_mongo: PyMongo = None, env: str = "development") -> None:
+    def __init__(self, name, db_sql: SQLAlchemy = None, db_mongo: PyMongo = None, env: str = None) -> None:
         """
         Initializes the FlaskServer class with the necessary dependencies.
         
