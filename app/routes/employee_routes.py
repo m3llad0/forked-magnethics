@@ -1,9 +1,9 @@
-from flask import request, jsonify, Blueprint
+from flask import request, jsonify, Blueprint, g
 from app.models import Employee, Client
 from app.services import db
 from app.utils import logger
 from app.config import CLERK_CLIENT
-from app.middleware import postman_consultant_token_required
+from app.middleware import postman_consultant_token_required, token_required
 import pandas as pd
 from io import StringIO, BytesIO
 
@@ -110,6 +110,23 @@ def delete_employee(id):
         return jsonify({"message": "Employee deleted successfully"}), 200
     except Exception as e:
         logger.critical("Error deleting an employee", exc_info=e)
+        return jsonify({"error": "Internal Server Error"}), 500
+
+@bp.route("/info", methods=["GET"])
+@token_required()
+def get_employee_info():
+    try:
+        employee_id = g.user_id
+        if not employee_id:
+            return jsonify({"error": "Missing employee ID"}), 400
+
+        employee = Employee.query.filter_by(id=employee_id).first()
+        if not employee:
+            return jsonify({"error": "Employee not found"}), 404
+
+        return jsonify(employee.to_dict()), 200
+    except Exception as e:
+        logger.critical("Failed to get employee info", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
 
 @bp.route("/upload/<client_id>", methods=["POST"])

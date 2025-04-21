@@ -59,7 +59,7 @@ class Employee(db.Model):
         return {
             "id": self.id,
             "employee_number": self.employee_number,
-            "first_name": self.first_name,
+            "name": self.first_name,
             "last_name_paternal": self.last_name_paternal,
             "last_name_maternal": self.last_name_maternal,
             "employee_type": self.employee_type,
