@@ -5,7 +5,7 @@ from app.utils import logger
 from app.config import CLERK_CLIENT
 from app.middleware import postman_consultant_token_required, token_required
 import pandas as pd
-from io import StringIO, BytesIO
+import time
 
 bp = Blueprint("employee", __name__)
 
@@ -134,23 +134,12 @@ def get_employee_info():
 def upload_employees(client_id):
     """
     Upload an Excel or CSV file to create employees in bulk.
-    The file must include the following columns (adjust as needed):
-      - employee_number, first_name, last_name_paternal, last_name_maternal,
-        position, hire_date (YYYY-MM-DD), email, phone_number
-      - direct_supervisor_id, functional_supervisor_id (optional)
-    The client_id is taken from a query parameter (e.g. ?client_id=org_ABC).
-
-    For each row:
-      1) Create a Clerk user (with email_address).
-      2) Add the user to the specified organization (client_id from query param).
-      3) Create the local Employee record in the database.
     """
     try:
         client = db.session.get(Client, client_id)
         if not client:
             return jsonify({"error": f"Client with ID '{client_id}' does not exist"}), 400
 
-        # 2. Check if file was provided
         if "file" not in request.files:
             return jsonify({"error": "No file part in the request"}), 400
 
@@ -169,7 +158,6 @@ def upload_employees(client_id):
             except Exception:
                 return jsonify({"error": "Unsupported file format. Provide .xlsx, .xls, or .csv."}), 400
 
-        # CSV column → model field map
         column_map = {
             "ID EMPLEADO": "employee_number",
             "NOMBRES EMPLEADO": "first_name",
@@ -193,7 +181,6 @@ def upload_employees(client_id):
             "ID EMPLEADO JEFE FUNCIONAL": "functional_supervisor_number"
         }
 
-        # Check required columns
         missing_cols = [col for col in column_map if col not in df.columns]
         if missing_cols:
             return jsonify({"error": f"Missing required columns: {missing_cols}"}), 400
@@ -203,48 +190,47 @@ def upload_employees(client_id):
         errors = []
         created_employees = []
 
-        # 1. Create Clerk users and initial employees
         for idx, row in df.iterrows():
             try:
+                logger.info(f"Processing row {idx + 1} {row}")
                 data = {new: row[old] for old, new in column_map.items()}
 
-                # Convert to correct types and strip blanks
                 for k in ["direct_supervisor_number", "functional_supervisor_number"]:
                     val = data.get(k)
                     if pd.isna(val) or str(val).strip() == "":
                         data[k] = None
                     else:
-                        data[k] = str(val).split(".")[0]  # handle Excel floats
+                        data[k] = str(val).split(".")[0]  # always store as string
 
                 data["client_id"] = client_id
 
-                # Create Clerk user
                 user = CLERK_CLIENT.users.create(request={
                     "email_address": [data["email"]],
                     "public_metadata": {"user_type": "employee"}
                 })
+
+                time.sleep(0.8)
 
                 if not user:
                     raise ValueError("Failed to create Clerk user")
 
                 data["id"] = user.id
                 created_employees.append(user.id)
-                number_to_clerk_id[data["employee_number"]] = user.id
 
-                # Temporarily remove supervisor info for now
+                number_to_clerk_id[str(data["employee_number"])] = user.id
+
                 sup_data = {
                     "direct_number": data.pop("direct_supervisor_number", None),
                     "func_number": data.pop("functional_supervisor_number", None),
                 }
 
-                employee = Employee.create_employee(data)
+                employee = Employee.create_employee(data)  # must not commit
                 created.append({**sup_data, "employee": employee})
 
             except Exception as e:
                 logger.error(f"Error processing row {idx}: {e}")
                 errors.append({"row": idx, "error": str(e)})
 
-        # 2. Map supervisor numbers to Clerk IDs
         for item in created:
             emp = item["employee"]
             direct = item.get("direct_number")
@@ -255,6 +241,7 @@ def upload_employees(client_id):
             if func and func in number_to_clerk_id:
                 emp.functional_supervisor_id = number_to_clerk_id[func]
 
+            db.session.add(emp)
         db.session.commit()
         return jsonify({
             "message": "Employee upload completed",
@@ -264,13 +251,13 @@ def upload_employees(client_id):
         }), 200
 
     except Exception as e:
-        db.session.rollback() 
+        db.session.rollback()
         logger.critical("Error uploading employees", exc_info=e)
         for clerk_id in created_employees:
-                print(f"Attempting to delete Clerk user {clerk_id}")
-                try:
-                    CLERK_CLIENT.users.delete(clerk_id)
-                    logger.warning(f"Rolled back Clerk user: {clerk_id}")
-                except Exception as delete_err:
-                    logger.error(f"Failed to delete Clerk user {clerk_id}: {delete_err}")
+            print(f"Attempting to delete Clerk user {clerk_id}")
+            try:
+                CLERK_CLIENT.users.delete(clerk_id)
+                logger.warning(f"Rolled back Clerk user: {clerk_id}")
+            except Exception as delete_err:
+                logger.error(f"Failed to delete Clerk user {clerk_id}: {delete_err}")
         return jsonify({"error": "Internal Server Error"}), 500

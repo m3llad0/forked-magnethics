@@ -7,7 +7,7 @@ class Employee(db.Model):
     __tablename__ = 'employees'
 
     id = db.Column(db.String(255), primary_key=True)
-    employee_number = db.Column(db.Integer, nullable=False, unique=True, index=True)
+    employee_number = db.Column(db.Integer, nullable=False, index=True)
     first_name = db.Column(db.String(255), nullable=False)
     last_name_paternal = db.Column(db.String(255), nullable=False)
     last_name_maternal = db.Column(db.String(255))
@@ -22,7 +22,7 @@ class Employee(db.Model):
     area = db.Column(db.String(255), nullable=False)
     department = db.Column(db.String(255), nullable=False)
     hire_date = db.Column(db.Date, nullable=False)
-    email = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
     phone_number = db.Column(db.String(255), nullable=True)
     floor = db.Column(db.String(255), nullable=False)
     direct_supervisor_id = db.Column(db.String(255), db.ForeignKey('employees.id'), nullable=True)
